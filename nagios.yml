@@ -1,0 +1,124 @@
+---
+ - name: Installation of Nagios
+   hosts: ansiblehost.com
+   become: yes
+   tasks:
+
+   - name: yum install -y wget httpd php gcc glibc glibc-common gd gd-devel make net-snmp unzip
+     yum: 
+      name: "{{ item }}"
+      state: present
+     with_items:
+       wget
+       httpd
+       php
+       gcc
+       glibc
+       glibc-common
+       gd
+       gd-devel
+       make
+       net-snmp
+       unzip
+
+   - name: Group add nagcmd
+     group: name=nagcmd state=present
+
+   - name: Add nagios user
+     user: name=nagios state=present groups=nagcmd
+
+   - name: Add apache to nagios and nagcmd group
+     user: name=apache state=present groups=nagios,nagcmd
+
+   - name: Check if the nagios is already downloaded
+     stat: path=/tmp/nagios-4.2.0.tar.gz
+     register: check_nagios
+
+   - name: Download the file nagios-4.2.0.tar.gz
+     get_url: url=http://prdownloads.sourceforge.net/sourceforge/nagios/nagios-4.2.0.tar.gz dest=/tmp
+     when: check_nagios.stat.exists == False
+
+   - name: Download the file nagios-plugins-2.0.3.tar.gz
+     get_url: url=http://nagios-plugins.org/download/nagios-plugins-2.0.3.tar.gz dest=/tmp/nagios-plugins-2.0.3.tar.gz
+     when: check_nagios.stat.exists == False
+
+   - name: Check if the nagios is already extracted
+     stat:
+
+   - name: Untar the Nagios Core tarball
+     unarchive: src=/tmp/nagios-{{ nagios_version }}.tar.gz dest=/tmp copy=no
+
+   - name: Check if nagios core is already compiled
+     command: /usr/local/nagios/bin/nagios --version | grep -m1 Core
+     register: nagios_exists
+     ignore_errors: True
+
+   - name: Compile Nagios core (Configure script)
+     command: "./configure --with-nagios-group=nagios --with-command-group=nagioscmd chdir=/tmp/nagios-{{ nagios_version }}"
+     when: nagios_exists|failed
+
+   - name: Compile Nagios core (Make)
+     command: "{{ item }} chdir=/tmp/nagios-{{ nagios_version }}"
+     with_items:
+      - make all
+      - make install
+      - make install-init
+      - make install-config
+      - make install-commandmode
+     when: nagios_exists|failed
+
+   - name: Install Nagios Webconf
+     command: "/usr/bin/install -c -m 644 sample-config/httpd.conf /etc/apache2/sites-enabled/nagios.conf chdir=/tmp/nagios-{{ nagios_version }}"
+     when: nagios_exists|failed
+  
+   - name: Copy eventhandlers directory
+     command: "cp -R contrib/eventhandlers/ /usr/local/nagios/libexec/ chdir=/tmp/nagios-{{ nagios_version }}"
+     when: nagios_exists|failed
+  
+   - name: Set owner to nagios:nagioscmd
+     file: path=/usr/local/nagios/libexec/ owner=nagios group=nagios recurse=yes
+     when: nagios_exists|failed
+  
+   - name: Set password for nagiosadmin user
+     htpasswd: path=/usr/local/nagios/etc/htpasswd.users name=nagiosadmin password=nagiosadmin owner=root group=www-data mode=0640
+     notify: restart apache
+  
+   - name: Install needed packages --> nagios-nrpe-plugin
+     apt: name={{ item }} state=present
+     with_items:
+      - nagios-nrpe-plugin
+ 
+   - name: Check if nagios plugins are already compiled
+     command: /usr/local/nagios/libexec/check_nagios --version
+     register: nagios_plugins_exists
+     ignore_errors: True
+ 
+   - name: Untar the Nagios Plugins Tarball
+     unarchive: src=/tmp/nagios-plugins-2.0.3.tar.gz dest=/tmp copy=no
+     when: nagios_plugins_exists|failed
+  
+   - name: Compile Nagios Plugins (Configure script)
+     command: "./configure --with-nagios-group=nagios --with-command-group=nagioscmd chdir=/tmp/nagios-plugins-2.0.3"
+     when: nagios_plugins_exists|failed
+  
+   - name: Compile Nagios plugins (Make)
+     command: "{{ item }} chdir=/tmp/nagios-plugins-2.0.3"
+     with_items:
+      - make
+      - make install
+     when: nagios_plugins_exists|failed
+  
+   - name: Enable rewrite Apache module
+     apache2_module: state=present name={{ item }}
+     with_items:
+      - rewrite
+      - cgi
+     notify:
+      - restart apache
+  
+   - name: Start nagios service
+     service: name=nagios state=started
+
+     handlers:
+   - name: restart apache
+     service: name=apache2 state=restarted
