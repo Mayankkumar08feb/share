@@ -1,1 +1,5 @@
-this is test file 
+this is test file
+
+
+A new has been added to file and move to staging area
+ 
