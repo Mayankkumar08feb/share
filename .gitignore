@@ -1,0 +1,4 @@
+*.bak
+*.log
+video/*.mp4
+images/*.jpg
